@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14161a">
+  <title>Meu Treino</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="backBtn" class="icon-btn" aria-label="Voltar" hidden>‹</button>
+    <h1 id="title">Meu Treino</h1>
+    <button id="syncBtn" class="icon-btn" aria-label="Atualizar ficha">⟳</button>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+  <main id="view"></main>
+
+  <nav class="tabbar" id="tabbar">
+    <button data-tab="home" class="active"><span>🏋️</span>Treino</button>
+    <button data-tab="history"><span>📈</span>Histórico</button>
+    <button data-tab="fichas"><span>🗂️</span>Fichas</button>
+    <button data-tab="settings"><span>⚙️</span>Ajustes</button>
+  </nav>
+
+  <!-- Timer de descanso / execução -->
+  <div id="timer" class="timer" hidden>
+    <div class="timer-kind" id="timerKind">Descanso</div>
+    <div class="ring-wrap">
+      <svg viewBox="0 0 200 200" class="ring">
+        <circle cx="100" cy="100" r="88" class="ring-bg"/>
+        <circle cx="100" cy="100" r="88" class="ring-fg" id="ringFg"/>
+      </svg>
+      <div class="timer-num" id="timerNum">0:30</div>
+    </div>
+    <div class="timer-next" id="timerNext"></div>
+    <div class="timer-actions">
+      <button id="tMinus" class="btn ghost">−15 s</button>
+      <button id="tSkip" class="btn primary">Pular</button>
+      <button id="tPlus" class="btn ghost">+15 s</button>
+    </div>
+  </div>
+
+  <!-- Diálogo genérico -->
+  <div id="sheet" class="sheet-backdrop" hidden>
+    <div class="sheet" role="dialog" aria-modal="true">
+      <div id="sheetBody"></div>
+    </div>
+  </div>
+
+  <script src="parser.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
