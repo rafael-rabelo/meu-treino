@@ -86,8 +86,21 @@
 
   const GROUP_STRIDE = 5;
 
-  function parse(grid) {
+  // merges: [[linha, coluna, nLinhas, nColunas], ...] (base 0), como devolvido pelo Apps Script
+  function parse(grid, merges) {
     const rows = (grid || []).map((r) => (r || []).map((v) => (v == null ? '' : String(v))));
+    const mergeAt = {};
+    (merges || []).forEach((m) => {
+      const [r0, c0, nr, nc] = m;
+      if (nr < 2 && nc < 2) return;
+      for (let a = 0; a < nr; a++) for (let b = 0; b < nc; b++) mergeAt[(r0 + a) + ',' + (c0 + b)] = { r: r0, c: c0, nr, nc };
+    });
+    // valor de uma célula, herdando o valor da célula de cima quando mesclada
+    const cell = (r, c) => {
+      const m = mergeAt[r + ',' + c];
+      return m ? (rows[m.r] || [])[m.c] || '' : (rows[r] || [])[c] || '';
+    };
+    const vMerge = (r, c) => { const m = mergeAt[r + ',' + c]; return m && m.nr > 1 ? m : null; };
     const meta = {};
     const fichas = [];
     let ficha = null;
@@ -175,11 +188,13 @@
       for (const { col, treino } of groups) {
         const name = clean(row[col]);
         if (!name) continue;
-        const seriesRaw = clean(row[col + 1]);
-        const restRaw = clean(row[col + 2]);
-        const loadRaw = clean(row[col + 3]);
+        const seriesRaw = clean(cell(r, col + 1));
+        const restRaw = clean(cell(r, col + 2));
+        const loadRaw = clean(cell(r, col + 3));
         const series = parseSeries(seriesRaw);
+        const restMerge = vMerge(r, col + 2);
         treino.exercises.push({
+          blockId: restMerge ? 'b' + restMerge.r + '_' + restMerge.c : null,
           name,
           key: normKey(name),
           series: seriesRaw,
@@ -192,6 +207,25 @@
           restSec: parseRest(restRaw),
           loadKg: parseLoadKg(loadRaw),
         });
+      }
+    }
+
+    // blocos: exercícios consecutivos que compartilham o mesmo descanso mesclado
+    for (const f of fichas) for (const t of f.treinos) {
+      let letter = 0;
+      const exs = t.exercises;
+      for (let i = 0; i < exs.length; ) {
+        const id = exs[i].blockId;
+        let j = i + 1;
+        if (id) while (j < exs.length && exs[j].blockId === id) j++;
+        const size = j - i;
+        for (let k = i; k < j; k++) {
+          if (id && size > 1) exs[k].block = { id, label: String.fromCharCode(65 + letter), size, pos: k - i, start: i };
+          else exs[k].block = null;
+          delete exs[k].blockId;
+        }
+        if (id && size > 1) letter++;
+        i = j;
       }
     }
 

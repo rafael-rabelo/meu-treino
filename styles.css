@@ -143,3 +143,12 @@ table.data th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .empty .big { font-size: 44px; }
 .search { margin-bottom: 12px; }
 .toast { position: fixed; left: 50%; bottom: calc(84px + var(--safe-bottom)); transform: translateX(-50%); background: var(--card2); color: var(--ink); padding: 10px 16px; border-radius: 999px; z-index: 50; font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+
+/* ---- Blocos (bi-set, tri-set, circuito) ---- */
+.block-group { border-left: 3px solid var(--accent); padding-left: 10px; margin: 8px 0; }
+.block-tag { font-size: 12px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; padding-top: 6px; }
+.block-box { background: rgba(76, 141, 255, .12); border: 1px solid rgba(76, 141, 255, .35); border-radius: 14px; padding: 10px 12px; margin: -6px 0 14px; }
+.block-names { margin: 4px 0; color: var(--ink2); }
+.block-names .cur { color: var(--ink); font-weight: 700; }
+.btn-sub { display: block; font-size: 14px; font-weight: 500; opacity: .8; margin-top: 2px; }
+body.in-workout .toast { bottom: auto; top: calc(66px + var(--safe-top)); }

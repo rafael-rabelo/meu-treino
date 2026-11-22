@@ -21,7 +21,7 @@
   // ---------- estado ----------
   let settings = Object.assign({ url: '', restDefault: 30, sound: true, vibrate: true }, store.get('settings', {}));
   let cache = store.get('cache', null);
-  let data = cache ? P.parse(cache.values) : { meta: {}, fichas: [] };
+  let data = cache ? P.parse(cache.values, cache.merges) : { meta: {}, fichas: [] };
   let overrides = store.get('overrides', {});
   let sessions = store.get('sessions', []);
   let aliases = store.get('aliases', {});
@@ -54,8 +54,15 @@
       name, key: ex.key, series, rest, load,
       sets: s.sets, reps: s.reps, unilateral: s.unilateral, durationSec: s.durationSec,
       restSec: P.parseRest(rest), loadKg: P.parseLoadKg(load),
-      edited: true, orig: ex,
+      block: ex.block || null, edited: true, orig: ex,
     };
+  }
+
+  const blockKind = (n) => (n === 2 ? 'bi-set' : n === 3 ? 'tri-set' : 'circuito');
+  function blockMembers(steps, id) {
+    const out = [];
+    steps.forEach((s, k) => { if (s.type === 'ex' && s.ex.block && s.ex.block.id === id) out.push(k); });
+    return out;
   }
 
   function stepsFor(ficha, ti) {
@@ -125,10 +132,17 @@
 
   function treinoPreview(ficha, ti, open) {
     const t = ficha.treinos[ti];
-    const rows = t.exercises.map((ex) => {
+    let rows = '';
+    t.exercises.forEach((ex, k) => {
       const e = effEx(ficha, ti, ex);
-      return `<div class="ex-preview"><span class="n">${esc(e.name)}${e.edited ? ' <span class="pill edited">editado</span>' : ''}</span><span class="d">${esc(exLine(e))}</span></div>`;
-    }).join('');
+      const b = ex.block;
+      if (b && b.pos === 0) {
+        const rest = e.restSec != null ? ' · descanso ' + fmtRest(e.restSec) + ' após a rodada' : '';
+        rows += `<div class="block-group"><div class="block-tag">Bloco ${esc(b.label)} · ${blockKind(b.size)}${rest}</div>`;
+      }
+      rows += `<div class="ex-preview"><span class="n">${esc(e.name)}${e.edited ? ' <span class="pill edited">editado</span>' : ''}</span><span class="d">${esc(exLine(e))}</span></div>`;
+      if (b && b.pos === b.size - 1) rows += '</div>';
+    });
     const warm = t.warmup.map((w) => `${w.title}${w.text ? ': ' + w.text : ''}`).join(' · ');
     return `<details ${open ? 'open' : ''}><summary class="sub">${t.exercises.length} exercícios${warm ? ' · ' + esc(warm) : ''}</summary>${rows}</details>`;
   }
@@ -262,7 +276,18 @@
       const exIdx = i - (steps.length - exCount) + 1;
       const lu = lastUsed(ex.key, active.sessionId);
       const usedVal = active.used[i] != null ? active.used[i] : lu ? lu.load : ex.load;
+      const blk = ex.block;
+      const members = blk ? blockMembers(steps, blk.id) : [];
       const restTxt = ex.restSec != null ? fmtRest(ex.restSec) : fmtRest(settings.restDefault) + ' <small>(padrão)</small>';
+      let blockHtml = '';
+      let setSuffix = '';
+      if (blk) {
+        const names = members.map((k) => `<span class="${k === i ? 'cur' : ''}">${esc(effEx(f, active.ti, steps[k].ex).name)}</span>`).join(' → ');
+        blockHtml = `<div class="block-box"><div class="block-tag">Bloco ${esc(blk.label)} · ${blockKind(blk.size)} · ${blk.pos + 1} de ${blk.size}</div>
+          <div class="block-names">${names}</div><div class="muted">Faça uma série de cada, em sequência; descanse só ao fim da rodada.</div></div>`;
+        const nx = nextInBlock(f, i, steps, members, 1);
+        if (nx && !nx.wrapped) setSuffix = '<span class="btn-sub">em seguida: ' + esc(effEx(f, active.ti, steps[nx.k].ex).name) + '</span>';
+      }
       const seriesTxt = ex.sets ? `${ex.sets} <small>×</small> ${esc(ex.reps || '—')}` : esc(ex.series || '—');
       const allDone = doneSets >= nSets;
 
@@ -270,9 +295,10 @@
         <div class="ex-step"><span>Exercício ${exIdx} de ${exCount}${ex.edited ? ' · <span class="pill edited">editado</span>' : ''}</span>
           <button class="btn small ghost" id="editEx">✎ Editar</button></div>
         <div class="ex-name">${esc(ex.name)}</div>
+        ${blockHtml}
         <div class="facts">
           <div class="fact"><div class="k">Séries</div><div class="v">${seriesTxt}</div>${ex.unilateral ? '<div class="h">cada lado</div>' : ''}</div>
-          <div class="fact"><div class="k">Descanso</div><div class="v">${restTxt}</div></div>
+          <div class="fact"><div class="k">Descanso</div><div class="v">${restTxt}</div>${blk ? '<div class="h">após a rodada</div>' : ''}</div>
           <div class="fact wide"><div class="k">Carga da ficha</div><div class="v">${esc(ex.load || '—')}</div>
             ${lu ? `<div class="h">Você usou <b>${esc(lu.load)}</b> em ${fmtDate(lu.at)}</div>` : ''}</div>
         </div>
@@ -282,7 +308,7 @@
           ? `<button class="btn ${isLast ? 'good' : 'primary'} big-action" id="nextBtn">${isLast ? 'Finalizar treino ✓' : 'Próximo exercício →'}</button>`
           : ex.durationSec
             ? `<button class="btn primary big-action" id="workBtn">▶ Série ${doneSets + 1} · ${fmtRest(ex.durationSec)}</button>`
-            : `<button class="btn primary big-action" id="setBtn">✓ Série ${doneSets + 1} de ${nSets} feita</button>`}
+            : `<button class="btn primary big-action" id="setBtn">✓ Série ${doneSets + 1} de ${nSets} feita${setSuffix}</button>`}
       </div>`;
     }
 
@@ -346,6 +372,26 @@
     const nSets = ex.sets || 1;
     const rest = ex.restSec != null ? ex.restSec : settings.restDefault;
     const isLast = i === steps.length - 1;
+    if (ex.block) {
+      const members = blockMembers(steps, ex.block.id);
+      const nx = nextInBlock(f, i, steps, members, 0);
+      const name = (k) => effEx(f, active.ti, steps[k].ex).name;
+      if (nx && !nx.wrapped) {           // segue direto para o próximo do bloco
+        active.step = nx.k; saveActive(); render(); window.scrollTo(0, 0);
+        toast('Agora: ' + name(nx.k) + ' (sem descanso)');
+      } else if (nx) {                   // rodada completa: descanso e volta ao primeiro
+        active.step = nx.k; saveActive(); render(); window.scrollTo(0, 0);
+        const round = (active.done[nx.k] || 0) + 1;
+        if (rest > 0) startTimer(rest, 'rest', `Rodada ${round} do bloco ${ex.block.label} · começa com ${name(nx.k)}`, null);
+      } else {                           // bloco terminado
+        const after = members[members.length - 1] + 1;
+        if (after >= steps.length) { active.step = members[members.length - 1]; saveActive(); render(); return; }
+        active.step = after; saveActive(); render(); window.scrollTo(0, 0);
+        const st = steps[after];
+        if (rest > 0) startTimer(rest, 'rest', 'Próximo: ' + (st.type === 'ex' ? effEx(f, active.ti, st.ex).name : st.w.title), null);
+      }
+      return;
+    }
     if (doneSets >= nSets) {
       if (isLast) { saveActive(); render(); return; }
       active.step = i + 1; saveActive(); render(); window.scrollTo(0, 0);
@@ -356,6 +402,17 @@
       saveActive(); render();
       if (rest > 0) startTimer(rest, 'rest', `Próxima: série ${doneSets + 1} de ${nSets}`, null);
     }
+  }
+
+  // Próximo exercício do bloco que ainda tem séries. extra=1 simula a série atual já marcada.
+  function nextInBlock(f, i, steps, members, extra) {
+    const remaining = (k) => (effEx(f, active.ti, steps[k].ex).sets || 1) - (active.done[k] || 0) - (k === i ? extra : 0);
+    const pos = members.indexOf(i);
+    for (let d = 1; d <= members.length; d++) {
+      const k = members[(pos + d) % members.length];
+      if (remaining(k) > 0) return { k, wrapped: pos + d >= members.length };
+    }
+    return null;
   }
 
   // ----- edição -----
@@ -544,7 +601,7 @@
         <p class="muted">Registros, edições e histórico ficam guardados só neste celular. Faça um backup de vez em quando.</p>
         <div class="nav-row"><button class="btn small" id="sExport">Exportar backup</button>
         <label class="btn small" style="text-align:center">Importar backup<input type="file" id="sImport" accept="application/json" hidden></label></div></div>
-      <p class="muted" style="text-align:center">Meu Treino · v1</p>`;
+      <p class="muted" style="text-align:center">Meu Treino · v2</p>`;
     const saveS = () => store.set('settings', settings);
     $('#sTest').onclick = async () => { settings.url = $('#sUrl').value.trim(); saveS(); $('#sStatus').textContent = 'Lendo…'; await sync(true); render(); };
     $('#sRest').onchange = (e) => { settings.restDefault = Math.max(0, parseInt(e.target.value, 10) || 0); saveS(); };
@@ -580,11 +637,11 @@
       const r = await fetch(u.toString(), { cache: 'no-store', redirect: 'follow' });
       const j = await r.json();
       if (j.error) throw new Error(j.error === 'unauthorized' ? 'chave inválida no endereço' : j.error);
-      const parsed = P.parse(j.values || []);
+      const parsed = P.parse(j.values || [], j.merges || []);
       if (!parsed.fichas.length) throw new Error('nenhuma ficha encontrada na planilha');
       const prev = currentFicha();
       const prevSig = prev ? JSON.stringify(prev.treinos) : null;
-      cache = { fetchedAt: j.fetchedAt || new Date().toISOString(), values: j.values };
+      cache = { fetchedAt: j.fetchedAt || new Date().toISOString(), values: j.values, merges: j.merges || [] };
       store.set('cache', cache);
       data = parsed;
       const cur = currentFicha();

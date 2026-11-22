@@ -1,6 +1,6 @@
 // Guarda o app no celular para abrir mesmo sem internet.
 // Os dados da planilha não passam por aqui (o app guarda a última ficha lida).
-const CACHE = 'meu-treino-v1';
+const CACHE = 'meu-treino-v2';
 const SHELL = ['./', 'index.html', 'styles.css', 'parser.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
