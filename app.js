@@ -19,7 +19,7 @@
   };
 
   // ---------- estado ----------
-  let settings = Object.assign({ url: '', restDefault: 30, sound: true, vibrate: true }, store.get('settings', {}));
+  let settings = Object.assign({ url: '', restDefault: 30, sound: true, vibrate: true, notify: true }, store.get('settings', {}));
   let cache = store.get('cache', null);
   let data = cache ? P.parse(cache.values, cache.merges) : { meta: {}, fichas: [] };
   let overrides = store.get('overrides', {});
@@ -220,6 +220,7 @@
       active = { sessionId: session.id, fichaId: ficha.id, ti, step: 0, done: {}, used: {} };
       saveActive();
       unlockAudio();
+      askNotifyPermission();
       go('workout');
     };
     if (active) {
@@ -232,6 +233,7 @@
 
   function finishActive(silent) {
     if (!active) return;
+    swPost({ type: 'clear' });
     const s = sessions.find((x) => x.id === active.sessionId);
     if (s) {
       if (!s.sets.length) sessions = sessions.filter((x) => x !== s);
@@ -322,6 +324,7 @@
     if ($('#endBtn')) $('#endBtn').onclick = () => confirmSheet('Encerrar o treino agora?', 'Encerrar e salvar', () => { finishActive(); tab('home'); });
 
     if (st.type === 'warm') {
+      publishEx({ title: st.w.title, body: st.w.text || 'Antes de começar', actionTitle: '✓ Feito', restAfterSet: 0, restLabel: '' });
       if ($('#warmTimer')) $('#warmTimer').onclick = () => { unlockAudio(); startTimer(st.w.durationSec, 'work', st.w.title, null); };
       $('#warmDone').onclick = () => { active.done[i] = 1; goStep(Math.min(i + 1, steps.length - 1)); };
       return;
@@ -329,6 +332,7 @@
 
     const ex = effEx(f, active.ti, st.ex);
     const nSets = ex.sets || 1;
+    publishEx(exNotif(f, i, ex, steps));
     $('#usedIn').oninput = (e) => { active.used[i] = e.target.value; saveActive(); };
     $('#editEx').onclick = () => editSheet(f, active.ti, st.ex);
     view.querySelectorAll('[data-set]').forEach((b) => (b.onclick = () => {
@@ -357,7 +361,7 @@
     saveSessions();
   }
 
-  function markSet(f, i, ex, steps) {
+  function markSet(f, i, ex, steps, fromAt) {
     unlockAudio();
     const s = sessions.find((x) => x.id === active.sessionId);
     const usedIn = $('#usedIn');
@@ -366,11 +370,12 @@
     const doneSets = (active.done[i] || 0) + 1;
     active.done[i] = doneSets;
     if (s) {
-      s.sets.push({ step: i, key: canon(ex.key), name: ex.name, load: used, loadKg: P.parseLoadKg(used), reps: ex.reps, at: new Date().toISOString() });
+      s.sets.push({ step: i, key: canon(ex.key), name: ex.name, load: used, loadKg: P.parseLoadKg(used), reps: ex.reps, at: new Date(fromAt || Date.now()).toISOString() });
       saveSessions();
     }
     const nSets = ex.sets || 1;
-    const rest = ex.restSec != null ? ex.restSec : settings.restDefault;
+    const rest0 = ex.restSec != null ? ex.restSec : settings.restDefault;
+    const rest = fromAt ? Math.round(rest0 - (Date.now() - fromAt) / 1000) : rest0; // série marcada pelo relógio: desconta o tempo já passado
     const isLast = i === steps.length - 1;
     if (ex.block) {
       const members = blockMembers(steps, ex.block.id);
@@ -382,13 +387,13 @@
       } else if (nx) {                   // rodada completa: descanso e volta ao primeiro
         active.step = nx.k; saveActive(); render(); window.scrollTo(0, 0);
         const round = (active.done[nx.k] || 0) + 1;
-        if (rest > 0) startTimer(rest, 'rest', `Rodada ${round} do bloco ${ex.block.label} · começa com ${name(nx.k)}`, null);
+        if (rest > 1) startTimer(rest, 'rest', `Rodada ${round} do bloco ${ex.block.label} · começa com ${name(nx.k)}`, null);
       } else {                           // bloco terminado
         const after = members[members.length - 1] + 1;
         if (after >= steps.length) { active.step = members[members.length - 1]; saveActive(); render(); return; }
         active.step = after; saveActive(); render(); window.scrollTo(0, 0);
         const st = steps[after];
-        if (rest > 0) startTimer(rest, 'rest', 'Próximo: ' + (st.type === 'ex' ? effEx(f, active.ti, st.ex).name : st.w.title), null);
+        if (rest > 1) startTimer(rest, 'rest', 'Próximo: ' + (st.type === 'ex' ? effEx(f, active.ti, st.ex).name : st.w.title), null);
       }
       return;
     }
@@ -397,10 +402,10 @@
       active.step = i + 1; saveActive(); render(); window.scrollTo(0, 0);
       const nx = steps[i + 1];
       const nxName = nx.type === 'ex' ? effEx(f, active.ti, nx.ex).name : nx.w.title;
-      if (rest > 0) startTimer(rest, 'rest', 'Próximo: ' + nxName, null);
+      if (rest > 1) startTimer(rest, 'rest', 'Próximo: ' + nxName, null);
     } else {
       saveActive(); render();
-      if (rest > 0) startTimer(rest, 'rest', `Próxima: série ${doneSets + 1} de ${nSets}`, null);
+      if (rest > 1) startTimer(rest, 'rest', `Próxima: série ${doneSets + 1} de ${nSets}`, null);
     }
   }
 
@@ -413,6 +418,49 @@
       if (remaining(k) > 0) return { k, wrapped: pos + d >= members.length };
     }
     return null;
+  }
+
+  // Estado do exercício atual para a notificação (que aparece no relógio)
+  function exNotif(f, i, ex, steps) {
+    const nSets = ex.sets || 1;
+    const doneSets = active.done[i] || 0;
+    const rest = ex.restSec != null ? ex.restSec : settings.restDefault;
+    const nameOf = (k) => (steps[k].type === 'ex' ? effEx(f, active.ti, steps[k].ex).name : steps[k].w.title);
+    const isLast = i === steps.length - 1;
+    const used = active.used[i] != null ? active.used[i] : (lastUsed(ex.key, active.sessionId) || {}).load || ex.load;
+    if (doneSets >= nSets) {
+      return { title: ex.name + ' · concluído', body: isLast ? 'Último exercício: encerre o treino no celular.' : 'Próximo: ' + nameOf(i + 1), actionTitle: isLast ? '' : '→ Próximo', restAfterSet: 0, restLabel: '' };
+    }
+    const bits = [ex.sets ? ex.sets + '×' + (ex.reps || '') : ex.series];
+    if (used) bits.push(used);
+    let restAfterSet = rest, restLabel;
+    if (doneSets + 1 < nSets) restLabel = `Próxima: série ${doneSets + 2} de ${nSets}`;
+    else restLabel = isLast ? '' : 'Próximo: ' + nameOf(i + 1);
+    if (ex.block) {
+      const members = blockMembers(steps, ex.block.id);
+      const nx = nextInBlock(f, i, steps, members, 1);
+      if (nx && !nx.wrapped) { restAfterSet = 0; bits.push('em seguida: ' + nameOf(nx.k)); }
+      else if (nx) restLabel = `Rodada ${(active.done[nx.k] || 0) + 1} do bloco ${ex.block.label} · ${nameOf(nx.k)}`;
+      else { const after = members[members.length - 1] + 1; restLabel = after < steps.length ? 'Próximo: ' + nameOf(after) : ''; if (after >= steps.length) restAfterSet = 0; }
+    } else bits.push('descanso ' + fmtRest(rest));
+    if (isLast && doneSets + 1 >= nSets && !ex.block) restAfterSet = 0;
+    return { title: `${ex.name} · série ${doneSets + 1} de ${nSets}`, body: bits.filter(Boolean).join(' · '), actionTitle: '✓ Série feita', restAfterSet, restLabel };
+  }
+
+  // Ação vinda do relógio/notificação: marca a série atual (ou avança)
+  function watchAction(at) {
+    if (!active) return;
+    const f = fichaById(active.fichaId);
+    if (!f || !f.treinos[active.ti]) return;
+    const steps = stepsFor(f, active.ti);
+    const i = Math.min(active.step, steps.length - 1);
+    const st = steps[i];
+    if (stack[stack.length - 1].name !== 'workout') { stack = [{ name: 'home' }, { name: 'workout' }]; render(); }
+    if (timer) stopTimer(false);
+    if (st.type === 'warm') { active.done[i] = 1; active.step = Math.min(i + 1, steps.length - 1); saveActive(); render(); return; }
+    const ex = effEx(f, active.ti, st.ex);
+    if ((active.done[i] || 0) >= (ex.sets || 1)) { if (i < steps.length - 1) { active.step = i + 1; saveActive(); render(); } return; }
+    markSet(f, i, ex, steps, at);
   }
 
   // ----- edição -----
@@ -597,16 +645,30 @@
         <div class="field"><label for="sRest">Descanso padrão quando a ficha não diz (segundos)</label><input id="sRest" type="number" inputmode="numeric" min="0" step="5" value="${settings.restDefault}"></div>
         <label class="row" style="margin:10px 0"><input type="checkbox" id="sSound" style="width:auto" ${settings.sound ? 'checked' : ''}> <span>Bipe no fim do descanso</span></label>
         <label class="row"><input type="checkbox" id="sVib" style="width:auto" ${settings.vibrate ? 'checked' : ''}> <span>Vibrar no fim do descanso</span></label></div>
+      <div class="card"><h3>Relógio (notificações)</h3>
+        <p class="muted">Durante o treino, o exercício atual aparece numa notificação, que o Galaxy Watch espelha, com o botão <b>Série feita</b>. No fim do descanso, a notificação vibra no relógio.</p>
+        <label class="row" style="margin:10px 0"><input type="checkbox" id="sNotify" style="width:auto" ${settings.notify !== false ? 'checked' : ''}> <span>Mostrar o treino nas notificações</span></label>
+        <p class="sub" id="nStatus">${notifStatusText()}</p>
+        <button class="btn small block" id="sNotifyTest">Testar: notificação em 5 s</button></div>
       <div class="card"><h3>Seus dados</h3>
         <p class="muted">Registros, edições e histórico ficam guardados só neste celular. Faça um backup de vez em quando.</p>
         <div class="nav-row"><button class="btn small" id="sExport">Exportar backup</button>
         <label class="btn small" style="text-align:center">Importar backup<input type="file" id="sImport" accept="application/json" hidden></label></div></div>
-      <p class="muted" style="text-align:center">Meu Treino · v2</p>`;
+      <p class="muted" style="text-align:center">Meu Treino · v3</p>`;
     const saveS = () => store.set('settings', settings);
     $('#sTest').onclick = async () => { settings.url = $('#sUrl').value.trim(); saveS(); $('#sStatus').textContent = 'Lendo…'; await sync(true); render(); };
     $('#sRest').onchange = (e) => { settings.restDefault = Math.max(0, parseInt(e.target.value, 10) || 0); saveS(); };
     $('#sSound').onchange = (e) => { settings.sound = e.target.checked; saveS(); };
     $('#sVib').onchange = (e) => { settings.vibrate = e.target.checked; saveS(); };
+    $('#sNotify').onchange = async (e) => { settings.notify = e.target.checked; saveS(); if (settings.notify) await askNotifyPermission(); $('#nStatus').textContent = notifStatusText(); };
+    $('#sNotifyTest').onclick = async () => {
+      settings.notify = true; saveS(); $('#sNotify').checked = true;
+      await askNotifyPermission();
+      $('#nStatus').textContent = notifStatusText();
+      if (!notifAllowed()) return;
+      swPost({ type: 'test' });
+      toast('Bloqueie o celular e olhe o relógio');
+    };
     $('#sExport').onclick = () => {
       const blob = new Blob([JSON.stringify({ app: 'meu-treino', v: 1, exportedAt: new Date().toISOString(), settings: Object.assign({}, settings, { url: '' }), overrides, sessions, aliases }, null, 1)], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'meu-treino-backup-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -686,7 +748,8 @@
   let timer = null;
   function startTimer(sec, kind, nextText, onEnd) {
     stopTimer(false);
-    timer = { end: Date.now() + sec * 1000, total: sec, kind, onEnd, ended: false };
+    timer = { end: Date.now() + sec * 1000, total: sec, kind, onEnd, ended: false, nextText };
+    if (kind === 'rest') swPost({ type: 'rest', sec, label: nextText || '', after: lastExNotif });
     $('#timerKind').textContent = kind === 'work' ? 'Execução' : 'Descanso';
     $('#timerNext').textContent = nextText || '';
     timerEl.className = 'timer' + (kind === 'work' ? ' work' : '');
@@ -714,9 +777,39 @@
     timerEl.hidden = true;
     if (fire && t.onEnd) t.onEnd();
   }
-  $('#tSkip').onclick = () => { if (timer) { const t = timer; timer.ended = true; stopTimer(t.kind === 'work'); } };
-  $('#tPlus').onclick = () => { if (timer && !timer.ended) { timer.end += 15000; timer.total += 15; tick(); } };
-  $('#tMinus').onclick = () => { if (timer && !timer.ended) { timer.end -= 15000; tick(); } };
+  const syncRest = () => { if (timer && timer.kind === 'rest') swPost({ type: 'rest', sec: Math.max(0, (timer.end - Date.now()) / 1000), label: timer.nextText || '', after: lastExNotif }); };
+  $('#tSkip').onclick = () => { if (timer) { const t = timer; timer.ended = true; if (t.kind === 'rest') swPost({ type: 'cancelRest' }); stopTimer(t.kind === 'work'); } };
+  $('#tPlus').onclick = () => { if (timer && !timer.ended) { timer.end += 15000; timer.total += 15; tick(); syncRest(); } };
+  $('#tMinus').onclick = () => { if (timer && !timer.ended) { timer.end -= 15000; tick(); syncRest(); } };
+
+  // ---------- notificações (o Galaxy Watch espelha as notificações do celular) ----------
+  let lastExNotif = null;
+  const notifAllowed = () => settings.notify !== false && 'Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator;
+  function notifStatusText() {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) return 'Este navegador não permite notificações.';
+    if (settings.notify === false) return 'Desligado.';
+    if (Notification.permission === 'granted') return '✓ Notificações permitidas.';
+    if (Notification.permission === 'denied') return '✗ Notificações bloqueadas: libere em Configurações do Android › Apps › Meu Treino (ou Chrome) › Notificações.';
+    return 'Ainda não permitido: toque em "Testar" para autorizar.';
+  }
+  async function askNotifyPermission() {
+    try { if (settings.notify !== false && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission(); } catch (e) {}
+  }
+  async function swPost(msg) {
+    if (!notifAllowed()) return;
+    try { const reg = await navigator.serviceWorker.ready; if (reg.active) reg.active.postMessage(msg); } catch (e) {}
+  }
+  function publishEx(n) {
+    lastExNotif = n;
+    if (!timer || timer.kind !== 'rest') swPost({ type: 'show', n });
+  }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      const m = e.data || {};
+      if (m.type === 'watchSet') watchAction(m.at);
+      else if (m.type === 'watchSkip' && timer && timer.kind === 'rest') { timer.ended = true; stopTimer(false); }
+    });
+  }
 
   let audioCtx = null;
   function unlockAudio() {
@@ -755,7 +848,7 @@
   render();
   sync(false);
 
-  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 })();
